@@ -45,6 +45,7 @@ class PDFReader:
             pipeline_options = PdfPipelineOptions(
                 do_ocr=False,
                 generate_page_images=False,
+                do_table_structure=False,
             )
             return DocumentConverter(
                 format_options={
