@@ -32,8 +32,9 @@ class PDFReader:
     def _create_converter() -> "Optional[Any]":
         """Erzeugt einen Docling DocumentConverter mit RAM-schonenden Optionen.
 
-        OCR und Seiten-Bild-Generierung sind deaktiviert, um den
-        Speicherverbrauch auf Firmen-Laptops zu minimieren.
+        Verwendet SimplePipeline statt StandardPdfPipeline, um das schwere
+        Layout-Detection-Modell (~1.5 GB RAM) zu vermeiden. Damit werden
+        auch große PDFs (90+ Seiten) auf Firmen-Laptops vollständig geparst.
 
         Returns:
             Einen initialisierten ``DocumentConverter`` oder ``None`` bei Fehler.
@@ -42,6 +43,7 @@ class PDFReader:
             from docling.datamodel.base_models import InputFormat
             from docling.datamodel.pipeline_options import PdfPipelineOptions
             from docling.document_converter import DocumentConverter, PdfFormatOption
+            from docling.pipeline.simple_pipeline import SimplePipeline
 
             pipeline_options = PdfPipelineOptions(
                 do_ocr=False,
@@ -50,7 +52,10 @@ class PDFReader:
             )
             return DocumentConverter(
                 format_options={
-                    InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+                    InputFormat.PDF: PdfFormatOption(
+                        pipeline_cls=SimplePipeline,
+                        pipeline_options=pipeline_options,
+                    )
                 }
             )
         except ImportError:
