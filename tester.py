@@ -7,8 +7,10 @@ und speichert die Ergebnisse als Excel-Dateien.
 import glob
 import logging
 import os
+import re
 
 import pandas as pd
+from tqdm import tqdm
 
 from src.agent import RAGAgent
 
@@ -122,10 +124,19 @@ def run_tests(agent: RAGAgent) -> None:
         index = agent.build_index(pdf_file)
         print(f"✅ Index erstellt ({len(index)} Zeichen)")
 
+        # Index-Speicherpfad anzeigen
+        pdf_stem = os.path.splitext(os.path.basename(pdf_file))[0]
+        safe_name = re.sub(r"[^\w]", "_", pdf_stem)
+        doc_folder = os.path.basename(os.path.dirname(pdf_file))
+        index_path = f"results/index_{doc_folder}_{safe_name}.md"
+        print(f"📝 Index gespeichert: {index_path}")
+
         # Fragen stellen
         doc_results: list[dict] = []
         questions = TEST_QUESTIONS.get(doc_num, [])
-        for i, question in enumerate(questions, 1):
+        for i, question in enumerate(
+            tqdm(questions, desc=f"📄 Dokument {doc_num}", unit="Fragen"), 1
+        ):
             print(f"\n--- Frage {i}/10 ---")
             result = agent.ask(pdf_file, question, index)
 
