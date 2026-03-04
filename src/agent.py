@@ -236,6 +236,12 @@ class RAGAgent:
             f.write(self._current_index)
         logger.info("Index gespeichert: %s", index_path)
 
+        markdown_path = f"results/markdown_{doc_folder}_{safe_name}.md"
+        full_markdown = self.reader.get_markdown(filename)
+        with open(markdown_path, "w", encoding="utf-8") as f:
+            f.write(full_markdown)
+        logger.info("Markdown gespeichert: %s", markdown_path)
+
         return self._current_index
 
     # ------------------------------------------------------------------
