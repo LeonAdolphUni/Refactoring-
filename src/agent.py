@@ -5,6 +5,8 @@ um relevante Kapitel auszuwählen und Antworten zu extrahieren.
 """
 
 import logging
+import os
+import re
 import time
 from typing import Any, Optional
 
@@ -184,15 +186,15 @@ class RAGAgent:
             self._current_index = ""
             return ""
 
-        import os
-
         basename = os.path.basename(filename)
         index_lines: list[str] = [f"## Kapitel-Index für {basename}", ""]
 
         total_prompt_tokens = 0
         total_completion_tokens = 0
 
-        for chapter in chapters:
+        from tqdm import tqdm
+
+        for chapter in tqdm(chapters, desc="Index-Erstellung", unit="Kapitel"):
             title = chapter.get("title", "Unbekannt")
             content = chapter.get("content", "")
 
@@ -224,6 +226,16 @@ class RAGAgent:
         )
 
         self._current_index = "\n".join(index_lines)
+
+        doc_folder = os.path.basename(os.path.dirname(filename))
+        pdf_stem = os.path.splitext(os.path.basename(filename))[0]
+        safe_name = re.sub(r"[^\w]", "_", pdf_stem)
+        os.makedirs("results", exist_ok=True)
+        index_path = f"results/index_{doc_folder}_{safe_name}.md"
+        with open(index_path, "w", encoding="utf-8") as f:
+            f.write(self._current_index)
+        logger.info("Index gespeichert: %s", index_path)
+
         return self._current_index
 
     # ------------------------------------------------------------------

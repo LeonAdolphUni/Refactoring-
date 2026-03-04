@@ -38,8 +38,9 @@ class PDFReader:
             Einen initialisierten ``DocumentConverter`` oder ``None`` bei Fehler.
         """
         try:
+            from docling.datamodel.base_models import InputFormat
             from docling.datamodel.pipeline_options import PdfPipelineOptions
-            from docling.document_converter import DocumentConverter
+            from docling.document_converter import DocumentConverter, PdfFormatOption
 
             pipeline_options = PdfPipelineOptions(
                 do_ocr=False,
@@ -47,9 +48,21 @@ class PDFReader:
             )
             return DocumentConverter(
                 format_options={
-                    "pdf": {"pipeline_options": pipeline_options}  # type: ignore[dict-item]
+                    InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
                 }
             )
+        except ImportError:
+            try:
+                from docling.document_converter import DocumentConverter
+
+                logger.warning(
+                    "PdfFormatOption nicht verfügbar. "
+                    "Fallback auf DocumentConverter() ohne RAM-Schutz-Optionen."
+                )
+                return DocumentConverter()
+            except Exception as exc:
+                logger.error("Docling konnte nicht initialisiert werden: %s", exc)
+                return None
         except Exception as exc:
             logger.error("Docling konnte nicht initialisiert werden: %s", exc)
             return None
@@ -156,7 +169,16 @@ class PDFReader:
 
         logger.info("Parse PDF: '%s' …", filename)
         try:
-            result = self._converter.convert(filename)
+            from tqdm import tqdm
+
+            with tqdm(
+                total=1,
+                desc="Parsing PDF",
+                bar_format="{desc}: {bar} {percentage:.0f}%",
+                ncols=50,
+            ) as pbar:
+                result = self._converter.convert(filename)
+                pbar.update(1)
             doc = result.document
             chapters = self._extract_chapters(doc)
             self.chapter_cache[filename] = chapters
