@@ -21,6 +21,7 @@ class PDFReader:
     def __init__(self) -> None:
         """Initialisiert den PDFReader und den leeren Kapitel-Cache."""
         self.chapter_cache: dict[str, list[dict]] = {}
+        self._result_cache: dict[str, Any] = {}
         self._converter = self._create_converter()
 
     # ------------------------------------------------------------------
@@ -180,6 +181,24 @@ class PDFReader:
             ) as pbar:
                 result = self._converter.convert(filename)
                 pbar.update(1)
+
+            try:
+                from hierarchical.postprocessor import ResultPostprocessor
+                ResultPostprocessor(result).process()
+                logger.info(
+                    "Hierarchical Postprocessor angewendet auf '%s'.", filename
+                )
+            except ImportError:
+                logger.warning(
+                    "docling-hierarchical-pdf nicht installiert. "
+                    "Überspringe Postprocessing."
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Hierarchical Postprocessor fehlgeschlagen: %s", exc
+                )
+
+            self._result_cache[filename] = result
             doc = result.document
             chapters = self._extract_chapters(doc)
             self.chapter_cache[filename] = chapters
@@ -196,6 +215,52 @@ class PDFReader:
                 exc,
             )
             return []
+
+    def _chapters_to_markdown(self, filename: str) -> str:
+        """Baut einen Markdown-String aus gecachten Kapiteln zusammen.
+
+        Args:
+            filename: Pfad zur PDF-Datei (für den Cache-Lookup).
+
+        Returns:
+            Markdown-String aus den gecachten Kapiteln oder leerer String.
+        """
+        chapters = self.chapter_cache.get(filename, [])
+        if not chapters:
+            return ""
+        parts = []
+        for ch in chapters:
+            level = ch.get("level", 1)
+            title = ch.get("title", "")
+            content = ch.get("content", "")
+            parts.append(f"{'#' * level} {title}\n\n{content}")
+        return "\n\n".join(parts)
+
+    def get_markdown(self, filename: str) -> str:
+        """Exportiert das geparste Dokument als Markdown-String.
+
+        Nutzt Doclings export_to_markdown() für sauberen hierarchischen Export.
+        Fällt zurück auf manuelle Kapitel-Zusammenstellung wenn
+        export_to_markdown nicht verfügbar.
+
+        Args:
+            filename: Pfad zur PDF-Datei.
+
+        Returns:
+            Markdown-String des Dokuments. Leerer String bei Fehler.
+        """
+        self.get_chapters_structured(filename)
+
+        result = self._result_cache.get(filename)
+        if result is None:
+            return self._chapters_to_markdown(filename)
+
+        try:
+            markdown = result.document.export_to_markdown()
+            return markdown
+        except Exception as exc:
+            logger.warning("export_to_markdown fehlgeschlagen: %s", exc)
+            return self._chapters_to_markdown(filename)
 
     def get_chapter_content(self, filename: str, chapter_title: str) -> str:
         """Gibt den Volltext eines Kapitels zurück.
