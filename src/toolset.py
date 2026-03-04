@@ -5,6 +5,7 @@ auf einzelne Kapitel bereit. Parsed jede Datei nur einmal (In-Memory-Cache).
 """
 
 import logging
+import re
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,7 @@ class PDFReader:
 
             pipeline_options = PdfPipelineOptions(
                 do_ocr=False,
+                do_table_structure=False,
                 generate_page_images=False,
             )
             return DocumentConverter(
@@ -143,6 +145,85 @@ class PDFReader:
     # Öffentliche API
     # ------------------------------------------------------------------
 
+    def _parse_with_pypdf(self, filename: str) -> list[dict]:
+        """Fallback-Parser mit pypdf für große PDFs die Docling nicht verarbeiten kann.
+
+        Args:
+            filename: Pfad zur PDF-Datei.
+
+        Returns:
+            Liste von Kapitel-Dictionaries mit den Schlüsseln
+            ``title``, ``content`` und ``level``.
+        """
+        logger.warning("Verwende PyPDF-Fallback für '%s'.", filename)
+        try:
+            from pypdf import PdfReader as PyPdfReader
+
+            reader = PyPdfReader(filename)
+            chapters: list[dict] = []
+            current_title = "Abschnitt 1"
+            current_content_parts: list[str] = []
+            all_page_texts: list[str] = []
+
+            for page in reader.pages:
+                text = page.extract_text() or ""
+                all_page_texts.append(text)
+                lines = text.split("\n")
+
+                for line in lines:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+
+                    # Heuristik: Zeile ist eine Überschrift wenn:
+                    # - Kurz (< 100 Zeichen) UND
+                    # - Beginnt mit einer Nummer (z.B. "1.", "1.1", "2.3.1") ODER
+                    # - Ist komplett in Großbuchstaben
+                    is_heading = False
+                    if len(stripped) < 100:
+                        if re.match(r'^\d+(\.\d+)*\.?\s+\S', stripped):
+                            is_heading = True
+                        elif stripped.isupper() and len(stripped) > 3:
+                            is_heading = True
+
+                    if is_heading:
+                        # Vorheriges Kapitel abschließen
+                        if current_content_parts:
+                            chapters.append({
+                                "title": current_title,
+                                "content": "\n".join(current_content_parts).strip(),
+                                "level": 1,
+                            })
+                        current_title = stripped
+                        current_content_parts = []
+                    else:
+                        current_content_parts.append(stripped)
+
+            # Letztes Kapitel abschließen
+            if current_content_parts:
+                chapters.append({
+                    "title": current_title,
+                    "content": "\n".join(current_content_parts).strip(),
+                    "level": 1,
+                })
+
+            # Wenn keine Kapitel erkannt: gesamten Text als ein Kapitel
+            if not chapters and all_page_texts:
+                chapters.append({
+                    "title": "Gesamtdokument",
+                    "content": "\n".join(all_page_texts).strip(),
+                    "level": 1,
+                })
+
+            logger.info(
+                "PyPDF-Fallback: %d Kapitel erkannt in '%s'.", len(chapters), filename
+            )
+            return chapters
+
+        except Exception as exc:
+            logger.error("PyPDF-Fallback fehlgeschlagen für '%s': %s", filename, exc)
+            return []
+
     def get_chapters_structured(self, filename: str) -> list[dict]:
         """Parst eine PDF-Datei und gibt die Kapitelstruktur zurück.
 
@@ -163,9 +244,11 @@ class PDFReader:
 
         if self._converter is None:
             logger.warning(
-                "Docling-Converter nicht verfügbar. Gebe leere Liste zurück."
+                "Docling-Converter nicht verfügbar. Wechsle zu PyPDF-Fallback."
             )
-            return []
+            chapters = self._parse_with_pypdf(filename)
+            self.chapter_cache[filename] = chapters
+            return chapters
 
         logger.info("Parse PDF: '%s' …", filename)
         try:
@@ -181,6 +264,16 @@ class PDFReader:
                 pbar.update(1)
             doc = result.document
             chapters = self._extract_chapters(doc)
+
+            # Fallback wenn Docling keine brauchbaren Kapitel liefert
+            if not chapters or all(not ch.get("content") for ch in chapters):
+                logger.warning(
+                    "Docling lieferte keine Kapitel mit Inhalt für '%s'. "
+                    "Wechsle zu PyPDF-Fallback.",
+                    filename,
+                )
+                chapters = self._parse_with_pypdf(filename)
+
             self.chapter_cache[filename] = chapters
             logger.info(
                 "PDF geparst: %d Kapitel gefunden in '%s'.",
@@ -190,11 +283,13 @@ class PDFReader:
             return chapters
         except Exception as exc:
             logger.warning(
-                "Fehler beim Parsen von '%s': %s. Gebe leere Liste zurück.",
+                "Docling fehlgeschlagen für '%s': %s. Wechsle zu PyPDF-Fallback.",
                 filename,
                 exc,
             )
-            return []
+            chapters = self._parse_with_pypdf(filename)
+            self.chapter_cache[filename] = chapters
+            return chapters
 
     def get_chapter_content(self, filename: str, chapter_title: str) -> str:
         """Gibt den Volltext eines Kapitels zurück.
